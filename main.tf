@@ -7,365 +7,211 @@ terraform {
   }
 }
 
+# Configure the AWS Provider
 provider "aws" {
   region = "eu-west-1"
 }
 
-# =========================================================
-# AMAZON LINUX 2023 AMI
-# =========================================================
-
-data "aws_ssm_parameter" "al2023_ami" {
-  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
-}
-
-# =========================================================
-# VPC
-# =========================================================
-
-resource "aws_vpc" "VPC01" {
-  cidr_block           = "192.168.0.0/16"
-  enable_dns_support   = true
-  enable_dns_hostnames = true
+# Create a VPC
+resource "aws_vpc" "VPC-01" {
+  cidr_block       = "192.168.0.0/16"
+  instance_tenancy = "default"
 
   tags = {
-    Name = "VPC01"
+    Name = "VPC-01"
   }
 }
 
-# =========================================================
-# INTERNET GATEWAY
-# =========================================================
-
+# Create & attach the IGW
 resource "aws_internet_gateway" "VPC01-IGW" {
-  vpc_id = aws_vpc.VPC01.id
+  vpc_id = aws_vpc.VPC-01.id
 
   tags = {
     Name = "VPC01-IGW"
   }
 }
 
-# =========================================================
-# PUBLIC SUBNET
-# =========================================================
-
-resource "aws_subnet" "public_subnet" {
-  vpc_id                  = aws_vpc.VPC01.id
-  cidr_block              = "192.168.1.0/24"
-  availability_zone       = "eu-west-1a"
-  map_public_ip_on_launch = true
+# Create a Public Subnet
+resource "aws_subnet" "VPC01-Public-SN" {
+  vpc_id     = aws_vpc.VPC-01.id
+  cidr_block = "192.168.1.0/24"
 
   tags = {
-    Name = "Public-Subnet"
+    Name = "VPC01-Public-SN"
   }
 }
 
-# =========================================================
-# PRIVATE SUBNET
-# =========================================================
-
-resource "aws_subnet" "private_subnet" {
-  vpc_id            = aws_vpc.VPC01.id
-  cidr_block        = "192.168.2.0/24"
-  availability_zone = "eu-west-1a"
+# Create a Private Subnet
+resource "aws_subnet" "VPC01-Private-SN" {
+  vpc_id     = aws_vpc.VPC-01.id
+  cidr_block = "192.168.3.0/24"
 
   tags = {
-    Name = "Private-Subnet"
+    Name = "VPC01-Private-SN"
   }
 }
 
-# =========================================================
-# PUBLIC ROUTE TABLE
-# =========================================================
+# Create a Public Route Table
+resource "aws_route_table" "VPC01-Public-RT" {
+  vpc_id = aws_vpc.VPC-01.id
 
-resource "aws_route_table" "public_rt" {
-  vpc_id = aws_vpc.VPC01.id
-
-  tags = {
-    Name = "Public-Route-Table"
-  }
-}
-
-# =========================================================
-# PUBLIC ROUTE -> INTERNET GATEWAY
-# =========================================================
-
-resource "aws_route" "public_internet_route" {
-  route_table_id         = aws_route_table.public_rt.id
-  destination_cidr_block = "0.0.0.0/0"
-  gateway_id             = aws_internet_gateway.VPC01-IGW.id
-}
-
-# =========================================================
-# PUBLIC SUBNET -> PUBLIC ROUTE TABLE
-# =========================================================
-
-resource "aws_route_table_association" "public_association" {
-  subnet_id      = aws_subnet.public_subnet.id
-  route_table_id = aws_route_table.public_rt.id
-}
-
-# =========================================================
-# PRIVATE ROUTE TABLE
-# =========================================================
-
-resource "aws_route_table" "private_rt" {
-  vpc_id = aws_vpc.VPC01.id
-
-  tags = {
-    Name = "Private-Route-Table"
-  }
-}
-
-# =========================================================
-# PRIVATE ROUTE -> NAT INSTANCE
-# =========================================================
-#
-# Provider 6.x:
-# Use the NAT instance's primary ENI as the route target.
-#
-# =========================================================
-
-resource "aws_route" "private_nat_route" {
-  route_table_id         = aws_route_table.private_rt.id
-  destination_cidr_block = "0.0.0.0/0"
-
-  network_interface_id = aws_instance.nat.primary_network_interface_id
-}
-
-# =========================================================
-# PRIVATE SUBNET -> PRIVATE ROUTE TABLE
-# =========================================================
-
-resource "aws_route_table_association" "private_association" {
-  subnet_id      = aws_subnet.private_subnet.id
-  route_table_id = aws_route_table.private_rt.id
-}
-
-# =========================================================
-# NAT INSTANCE SECURITY GROUP
-# =========================================================
-
-resource "aws_security_group" "nat_sg" {
-  name        = "NAT-Instance-SG"
-  description = "Security group for NAT instance"
-  vpc_id      = aws_vpc.VPC01.id
-
-  # Allow all inbound traffic for this lab
-  ingress {
-    description = "Allow all inbound traffic"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  # Allow all outbound traffic
-  egress {
-    description = "Allow all outbound traffic"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.VPC01-IGW.id
   }
 
   tags = {
-    Name = "NAT-Instance-SG"
+    Name = "VPC01-Public-RT"
   }
 }
 
-# =========================================================
-# PRIVATE EC2 SECURITY GROUP
-# =========================================================
+resource "aws_route_table_association" "VPC01-Public-RT-Association" {
+  subnet_id      = aws_subnet.VPC01-Public-SN.id
+  route_table_id = aws_route_table.VPC01-Public-RT.id
+}
 
-resource "aws_security_group" "private_sg" {
-  name        = "Private-EC2-SG"
-  description = "Security group for private EC2"
-  vpc_id      = aws_vpc.VPC01.id
+# Create a EIP
+resource "aws_eip" "NAT-EIP" {
+  domain   = "vpc"
+}
 
-  # SSH from inside the VPC
-  ingress {
-    description = "SSH from VPC"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["192.168.0.0/16"]
-  }
 
-  # Allow all outbound traffic
-  egress {
-    description = "Allow all outbound traffic"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+# Create a Private Route Table
+resource "aws_route_table" "VPC01-Private-RT" {
+  vpc_id = aws_vpc.VPC-01.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+     network_interface_id   = aws_instance.VPC01-NATEC2.primary_network_interface_id
   }
 
   tags = {
-    Name = "Private-EC2-SG"
+    Name = "VPC01-Private-RT"
   }
 }
 
-# =========================================================
-# KEY PAIR
-# =========================================================
-
-resource "aws_key_pair" "terraform_key" {
-  key_name = "terraform-nat-key"
-
-  public_key = "YOUR_PUBLIC_SSH_KEY_HERE"
+resource "aws_route_table_association" "VPC01-Private-RT-Association" {
+  subnet_id      = aws_subnet.VPC01-Private-SN.id
+  route_table_id = aws_route_table.VPC01-Private-RT.id
 }
 
-# =========================================================
-# NAT INSTANCE
-# =========================================================
+#Create NAT INSTANCE
+#----------------------------------------------------------------------------------------------------------------------------------------------------------
 
-resource "aws_instance" "nat" {
-  ami           = data.aws_ssm_parameter.al2023_ami.value
+# Create a Security Group
+resource "aws_security_group" "VPC01-NAT-NSG" {
+  name        = "VPC01-NAT-NSG"
+  description = "Allow all inbound traffic and all outbound traffic"
+  vpc_id      = aws_vpc.VPC-01.id
+
+  tags = {
+    Name = "VPC01-NAT-NSG"
+  }
+}
+
+#Create keypair
+resource "aws_key_pair" "NAT_Server_Key" {
+  key_name   = "NAT_Server_Key"
+  public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQD3F6tyPEFEzV0LX3X8BsXdMsQz1x2cEikKDEY0aIj41qgxMCP/iteneqXSIFZBp5vizPvaoIR3Um9xK7PGoW8giupGn+EPuxIA4cDM4vzOqOkiMPhz5XK0whEjkVzTo4+S0puvDZuwIsdiW9mxhJc7tgBNL0cYlWSYVkz4G/fslNfRPW5mYAM49f4fhtxPb5ok4Q2Lg9dPKVHO/Bgeu5woMc7RY0p1ej6D4CKFE6lymSDJpW0YHX/wqE9+cfEauh7xZcG0q9t2ta6F6fmX0agvpFyZo8aFbXeUBr7osSCJNgvavWbM/06niWrOvYX2xwWdhXmXSrbX8ZbabVohBK41 email@example.com"
+}
+
+#ingress rule
+resource "aws_vpc_security_group_ingress_rule" "allow_all_traffic_NAT" {
+  security_group_id = aws_security_group.VPC01-NAT-NSG.id
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 0
+  ip_protocol       = "-1"
+  to_port           = 0
+}
+
+#egress rule
+resource "aws_vpc_security_group_egress_rule" "allow_all_traffic_NAT" {
+  security_group_id = aws_security_group.VPC01-NAT-NSG.id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1" # semantically equivalent to all ports
+}
+
+resource "aws_eip_association" "NAT-EIP" {
+  allocation_id = aws_eip.NAT-EIP.id
+  instance_id   = aws_instance.VPC01-NATEC2.id
+}
+
+resource "aws_instance" "VPC01-NATEC2" {
+  ami           = "ami-0b3ba1acb76a70451"
   instance_type = "t3.micro"
-
-  subnet_id = aws_subnet.public_subnet.id
-
-  key_name = aws_key_pair.terraform_key.key_name
-
-  vpc_security_group_ids = [
-    aws_security_group.nat_sg.id
-  ]
-
-  # Required for NAT/routing functionality
+  key_name      = "NAT_Server_Key"
+  subnet_id     = aws_subnet.VPC01-Public-SN.id
+  vpc_security_group_ids  = [aws_security_group.VPC01-NAT-NSG.id]
+  user_data = file("/root/TERRAFORM_AWS_NAT_INSTANCE/nat_config.sh")
   source_dest_check = false
 
-  user_data = <<-EOF
-    #!/bin/bash
-
-    # =====================================================
-    # ENABLE IP FORWARDING
-    # =====================================================
-
-    echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/custom-ip-forwarding.conf
-
-    sysctl -p /etc/sysctl.d/custom-ip-forwarding.conf
-
-    # =====================================================
-    # INSTALL IPTABLES
-    # =====================================================
-
-    dnf install -y iptables-services
-
-    # =====================================================
-    # ENABLE IPTABLES SERVICE
-    # =====================================================
-
-    systemctl enable iptables
-    systemctl start iptables
-
-    # =====================================================
-    # DETECT PRIMARY NETWORK INTERFACE
-    # =====================================================
-
-    INTERFACE=$(ip route | awk '/default/ {print $5; exit}')
-
-    # =====================================================
-    # ENABLE NAT / MASQUERADE
-    # =====================================================
-
-    /sbin/iptables -t nat -A POSTROUTING -o $INTERFACE -j MASQUERADE
-
-    # =====================================================
-    # ALLOW FORWARDING
-    # =====================================================
-
-    /sbin/iptables -F FORWARD
-
-    # =====================================================
-    # SAVE IPTABLES RULES
-    # =====================================================
-
-    service iptables save
-  EOF
-
   tags = {
-    Name = "NAT-Instance"
+    Name = "VPC01-NATEC2"
   }
 }
 
-# =========================================================
-# ELASTIC IP
-# =========================================================
 
-resource "aws_eip" "nat_eip" {
-  domain = "vpc"
+                                     #Creation of public server and private server
+
+# ----------------------------------------------------------------------------------------------------------------------------------------------------------#
+
+
+# Create a Security Group
+resource "aws_security_group" "VPC01-VM-NSG" {
+  name        = "VPC01-VM-NSG"
+  description = "Allow SSH inbound traffic and all outbound traffic"
+  vpc_id      = aws_vpc.VPC-01.id
 
   tags = {
-    Name = "NAT-Instance-EIP"
+    Name = "VPC01-VM-NSG"
   }
 }
 
-# =========================================================
-# ASSOCIATE ELASTIC IP WITH NAT INSTANCE
-# =========================================================
-
-resource "aws_eip_association" "nat_eip_association" {
-  allocation_id = aws_eip.nat_eip.id
-  instance_id   = aws_instance.nat.id
+#Create keypair
+resource "aws_key_pair" "Terraform_Server_Key" {
+  key_name   = "Terraform_Server_Key"
+  public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQD3F6tyPEFEzV0LX3X8BsXdMsQz1x2cEikKDEY0aIj41qgxMCP/iteneqXSIFZBp5vizPvaoIR3Um9xK7PGoW8giupGn+EPuxIA4cDM4vzOqOkiMPhz5XK0whEjkVzTo4+S0puvDZuwIsdiW9mxhJc7tgBNL0cYlWSYVkz4G/fslNfRPW5mYAM49f4fhtxPb5ok4Q2Lg9dPKVHO/Bgeu5woMc7RY0p1ej6D4CKFE6lymSDJpW0YHX/wqE9+cfEauh7xZcG0q9t2ta6F6fmX0agvpFyZo8aFbXeUBr7osSCJNgvavWbM/06niWrOvYX2xwWdhXmXSrbX8ZbabVohBK41 email@example.com"
 }
 
-# =========================================================
-# PRIVATE EC2
-# =========================================================
 
-resource "aws_instance" "private_ec2" {
-  ami           = data.aws_ssm_parameter.al2023_ami.value
+
+resource "aws_vpc_security_group_ingress_rule" "allow_ssh_ipv4" {
+  security_group_id = aws_security_group.VPC01-VM-NSG.id
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 22
+  ip_protocol       = "tcp"
+  to_port           = 22
+}
+
+resource "aws_vpc_security_group_egress_rule" "allow_all_traffic_ipv4" {
+  security_group_id = aws_security_group.VPC01-VM-NSG.id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1" # semantically equivalent to all ports
+}
+
+# Create a Public Instance
+resource "aws_instance" "VPC01-Public-VM" {
+  ami           = "ami-0b3ba1acb76a70451"
   instance_type = "t3.micro"
-
-  subnet_id = aws_subnet.private_subnet.id
-
-  key_name = aws_key_pair.terraform_key.key_name
-
-  vpc_security_group_ids = [
-    aws_security_group.private_sg.id
-  ]
-
-  # No public IP
-  associate_public_ip_address = false
+  key_name      = "Terraform_Server_Key"
+  subnet_id     = aws_subnet.VPC01-Public-SN.id
+  vpc_security_group_ids  = [aws_security_group.VPC01-VM-NSG.id]
+  associate_public_ip_address 	=  true
 
   tags = {
-    Name = "Private-EC2"
+    Name = "VPC01-Public-VM"
   }
 }
 
-# =========================================================
-# OUTPUTS
-# =========================================================
-
-output "vpc_id" {
-  value = aws_vpc.VPC01.id
-}
-
-output "public_subnet_id" {
-  value = aws_subnet.public_subnet.id
-}
-
-output "private_subnet_id" {
-  value = aws_subnet.private_subnet.id
-}
-
-output "nat_instance_id" {
-  value = aws_instance.nat.id
-}
-
-output "nat_private_ip" {
-  value = aws_instance.nat.private_ip
-}
-
-output "nat_public_ip" {
-  value = aws_eip.nat_eip.public_ip
-}
-
-output "private_ec2_id" {
-  value = aws_instance.private_ec2.id
-}
-
-output "private_ec2_private_ip" {
-  value = aws_instance.private_ec2.private_ip
+# Create a Private Instance
+resource "aws_instance" "VPC01-Private-VM" {
+  ami           = "ami-0b3ba1acb76a70451"
+  instance_type = "t3.micro"
+  key_name      = "Terraform_Server_Key"
+  subnet_id     = aws_subnet.VPC01-Private-SN.id
+  vpc_security_group_ids  = [aws_security_group.VPC01-VM-NSG.id]
+  associate_public_ip_address 	=  false
+  tags = {
+    Name = "VPC01-Private-VM"
+  }
 }
