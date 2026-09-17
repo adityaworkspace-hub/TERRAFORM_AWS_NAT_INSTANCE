@@ -11,13 +11,17 @@ provider "aws" {
   region = "eu-west-1"
 }
 
-# DATA - AMAZON LINUX 2023 AMI
+# =========================================================
+# AMAZON LINUX 2023 AMI
+# =========================================================
 
 data "aws_ssm_parameter" "al2023_ami" {
   name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
 }
 
+# =========================================================
 # VPC
+# =========================================================
 
 resource "aws_vpc" "VPC01" {
   cidr_block           = "192.168.0.0/16"
@@ -29,7 +33,9 @@ resource "aws_vpc" "VPC01" {
   }
 }
 
+# =========================================================
 # INTERNET GATEWAY
+# =========================================================
 
 resource "aws_internet_gateway" "VPC01-IGW" {
   vpc_id = aws_vpc.VPC01.id
@@ -39,7 +45,9 @@ resource "aws_internet_gateway" "VPC01-IGW" {
   }
 }
 
+# =========================================================
 # PUBLIC SUBNET
+# =========================================================
 
 resource "aws_subnet" "public_subnet" {
   vpc_id                  = aws_vpc.VPC01.id
@@ -52,7 +60,9 @@ resource "aws_subnet" "public_subnet" {
   }
 }
 
+# =========================================================
 # PRIVATE SUBNET
+# =========================================================
 
 resource "aws_subnet" "private_subnet" {
   vpc_id            = aws_vpc.VPC01.id
@@ -64,7 +74,9 @@ resource "aws_subnet" "private_subnet" {
   }
 }
 
+# =========================================================
 # PUBLIC ROUTE TABLE
+# =========================================================
 
 resource "aws_route_table" "public_rt" {
   vpc_id = aws_vpc.VPC01.id
@@ -74,7 +86,9 @@ resource "aws_route_table" "public_rt" {
   }
 }
 
-# PUBLIC ROUTE TO INTERNET GATEWAY
+# =========================================================
+# PUBLIC ROUTE -> INTERNET GATEWAY
+# =========================================================
 
 resource "aws_route" "public_internet_route" {
   route_table_id         = aws_route_table.public_rt.id
@@ -82,14 +96,18 @@ resource "aws_route" "public_internet_route" {
   gateway_id             = aws_internet_gateway.VPC01-IGW.id
 }
 
-# PUBLIC SUBNET ROUTE TABLE ASSOCIATION
+# =========================================================
+# PUBLIC SUBNET -> PUBLIC ROUTE TABLE
+# =========================================================
 
 resource "aws_route_table_association" "public_association" {
   subnet_id      = aws_subnet.public_subnet.id
   route_table_id = aws_route_table.public_rt.id
 }
 
+# =========================================================
 # PRIVATE ROUTE TABLE
+# =========================================================
 
 resource "aws_route_table" "private_rt" {
   vpc_id = aws_vpc.VPC01.id
@@ -99,37 +117,48 @@ resource "aws_route_table" "private_rt" {
   }
 }
 
-# PRIVATE ROUTE THROUGH NAT INSTANCE
+# =========================================================
+# PRIVATE ROUTE -> NAT INSTANCE
+# =========================================================
+#
+# Provider 6.x:
+# Use the NAT instance's primary ENI as the route target.
+#
+# =========================================================
 
 resource "aws_route" "private_nat_route" {
   route_table_id         = aws_route_table.private_rt.id
   destination_cidr_block = "0.0.0.0/0"
-  instance_id             = aws_instance.nat.id
+
+  network_interface_id = aws_instance.nat.primary_network_interface_id
 }
 
-# PRIVATE SUBNET ROUTE TABLE ASSOCIATION
+# =========================================================
+# PRIVATE SUBNET -> PRIVATE ROUTE TABLE
+# =========================================================
 
 resource "aws_route_table_association" "private_association" {
   subnet_id      = aws_subnet.private_subnet.id
   route_table_id = aws_route_table.private_rt.id
 }
 
+# =========================================================
 # NAT INSTANCE SECURITY GROUP
+# =========================================================
 
 resource "aws_security_group" "nat_sg" {
   name        = "NAT-Instance-SG"
   description = "Security group for NAT instance"
   vpc_id      = aws_vpc.VPC01.id
 
-  # all traffic inbound traffic
+  # Allow all inbound traffic for this lab
   ingress {
-    description = "All traffic"
+    description = "Allow all inbound traffic"
     from_port   = 0
-    to_port     = 65535
+    to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
-
 
   # Allow all outbound traffic
   egress {
@@ -145,23 +174,25 @@ resource "aws_security_group" "nat_sg" {
   }
 }
 
+# =========================================================
 # PRIVATE EC2 SECURITY GROUP
+# =========================================================
 
 resource "aws_security_group" "private_sg" {
   name        = "Private-EC2-SG"
   description = "Security group for private EC2"
   vpc_id      = aws_vpc.VPC01.id
 
-  # SSH from NAT/Public network for lab testing
+  # SSH from inside the VPC
   ingress {
-    description = "SSH"
+    description = "SSH from VPC"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["192.168.0.0/16"]
   }
 
-  # Allow HTTP outbound
+  # Allow all outbound traffic
   egress {
     description = "Allow all outbound traffic"
     from_port   = 0
@@ -175,7 +206,9 @@ resource "aws_security_group" "private_sg" {
   }
 }
 
+# =========================================================
 # KEY PAIR
+# =========================================================
 
 resource "aws_key_pair" "terraform_key" {
   key_name = "terraform-nat-key"
@@ -183,7 +216,9 @@ resource "aws_key_pair" "terraform_key" {
   public_key = "YOUR_PUBLIC_SSH_KEY_HERE"
 }
 
+# =========================================================
 # NAT INSTANCE
+# =========================================================
 
 resource "aws_instance" "nat" {
   ami           = data.aws_ssm_parameter.al2023_ami.value
@@ -197,35 +232,55 @@ resource "aws_instance" "nat" {
     aws_security_group.nat_sg.id
   ]
 
-  # VERY IMPORTANT
-  # NAT instance must forward traffic for other instances
+  # Required for NAT/routing functionality
   source_dest_check = false
 
   user_data = <<-EOF
     #!/bin/bash
 
-    # Enable IPv4 forwarding
+    # =====================================================
+    # ENABLE IP FORWARDING
+    # =====================================================
+
     echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/custom-ip-forwarding.conf
 
     sysctl -p /etc/sysctl.d/custom-ip-forwarding.conf
 
-    # Install iptables
+    # =====================================================
+    # INSTALL IPTABLES
+    # =====================================================
+
     dnf install -y iptables-services
 
-    # Enable iptables service
+    # =====================================================
+    # ENABLE IPTABLES SERVICE
+    # =====================================================
+
     systemctl enable iptables
     systemctl start iptables
 
-    # Automatically detect primary network interface
+    # =====================================================
+    # DETECT PRIMARY NETWORK INTERFACE
+    # =====================================================
+
     INTERFACE=$(ip route | awk '/default/ {print $5; exit}')
 
-    # Enable NAT / MASQUERADE
+    # =====================================================
+    # ENABLE NAT / MASQUERADE
+    # =====================================================
+
     /sbin/iptables -t nat -A POSTROUTING -o $INTERFACE -j MASQUERADE
 
-    # Allow forwarding
+    # =====================================================
+    # ALLOW FORWARDING
+    # =====================================================
+
     /sbin/iptables -F FORWARD
 
-    # Save iptables configuration
+    # =====================================================
+    # SAVE IPTABLES RULES
+    # =====================================================
+
     service iptables save
   EOF
 
@@ -234,7 +289,9 @@ resource "aws_instance" "nat" {
   }
 }
 
-# ELASTIC IP FOR NAT INSTANCE
+# =========================================================
+# ELASTIC IP
+# =========================================================
 
 resource "aws_eip" "nat_eip" {
   domain = "vpc"
@@ -244,14 +301,18 @@ resource "aws_eip" "nat_eip" {
   }
 }
 
-# ASSOCIATE EIP WITH NAT INSTANCE
+# =========================================================
+# ASSOCIATE ELASTIC IP WITH NAT INSTANCE
+# =========================================================
 
 resource "aws_eip_association" "nat_eip_association" {
   allocation_id = aws_eip.nat_eip.id
   instance_id   = aws_instance.nat.id
 }
 
+# =========================================================
 # PRIVATE EC2
+# =========================================================
 
 resource "aws_instance" "private_ec2" {
   ami           = data.aws_ssm_parameter.al2023_ami.value
@@ -271,38 +332,4 @@ resource "aws_instance" "private_ec2" {
   tags = {
     Name = "Private-EC2"
   }
-}
-
-# OUTPUTS
-
-output "vpc_id" {
-  value = aws_vpc.VPC01.id
-}
-
-output "public_subnet_id" {
-  value = aws_subnet.public_subnet.id
-}
-
-output "private_subnet_id" {
-  value = aws_subnet.private_subnet.id
-}
-
-output "nat_instance_id" {
-  value = aws_instance.nat.id
-}
-
-output "nat_private_ip" {
-  value = aws_instance.nat.private_ip
-}
-
-output "nat_public_ip" {
-  value = aws_eip.nat_eip.public_ip
-}
-
-output "private_ec2_id" {
-  value = aws_instance.private_ec2.id
-}
-
-output "private_ec2_private_ip" {
-  value = aws_instance.private_ec2.private_ip
 }
