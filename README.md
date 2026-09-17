@@ -333,8 +333,6 @@ ssh ec2-user@<PRIVATE_EC2_PRIVATE_IP>
 
 This validates connectivity between the Public and Private Subnets.
 
-![Public to Private Connectivity](images/public-to-private-connectivity.png)
-
 
 Step 21 - Test NAT Instance IP Forwarding
 
@@ -350,8 +348,6 @@ Expected output:
 
 This confirms that the NAT Instance is configured to forward IPv4 traffic.
 
-![IP Forwarding](images/ip-forwarding.png)
-
 
 Step 22 - Verify IPTables MASQUERADE
 
@@ -365,8 +361,6 @@ The output should contain the MASQUERADE rule.
 
 This confirms that the NAT Instance is performing source address translation for outbound traffic.
 
-![IPTables MASQUERADE](images/iptables-masquerade.png)
-
 
 Step 23 - Test Private EC2 Internet Connectivity
 
@@ -379,9 +373,6 @@ curl https://checkip.amazonaws.com
 The returned public IP address should match the Elastic IP associated with the NAT Instance.
 
 This confirms that the Private EC2 traffic is passing through the NAT Instance.
-
-![Private EC2 NAT Test](images/private-ec2-nat-test.png)
-
 
 Step 24 - Verify Internet Access from Private EC2
 
@@ -443,17 +434,11 @@ Reviewed the Terraform destroy plan to verify the AWS resources that will be rem
 
 terraform plan -destroy
 
-![Terraform Destroy Plan](images/terraform-destroy-plan.png)
-
-
 Step 26 - Destroy Terraform Infrastructure
 
 Destroyed the AWS infrastructure created by Terraform.
 
 terraform destroy
-
-![Terraform Destroy Success](images/terraform-destroy-success.png)
-
 
 Learning Outcomes
 
